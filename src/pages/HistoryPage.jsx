@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
+import { App } from 'antd'
 import Sidebar from '../components/Sidebar'
 import { auth, db } from '../firebase'
 import { collection, query, where, orderBy, getDocs, doc, deleteDoc } from 'firebase/firestore'
 
 export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
+  const { modal, notification } = App.useApp()
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedChat, setSelectedChat] = useState(null)
@@ -41,17 +43,34 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
 
   const handleDelete = async (id, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm("คุณแน่ใจหรือไม่ว่าต้องการลบประวัตินี้?")) return;
-    try {
-      await deleteDoc(doc(db, 'chatHistory', id));
-      setHistory(prev => prev.filter(item => item.id !== id));
-      if (selectedChat?.id === id) {
-        setSelectedChat(null);
-      }
-    } catch (error) {
-      console.error("Error deleting history:", error);
-      alert("เกิดข้อผิดพลาดในการลบข้อมูล");
-    }
+    
+    modal.confirm({
+      title: 'คุณแน่ใจหรือไม่ว่าต้องการลบประวัตินี้?',
+      content: 'ข้อมูลที่ลบไปแล้วจะไม่สามารถกู้คืนกลับมาได้',
+      okText: 'ลบข้อมูล',
+      okType: 'danger',
+      cancelText: 'ยกเลิก',
+      onOk: async () => {
+        try {
+          await deleteDoc(doc(db, 'chatHistory', id));
+          setHistory(prev => prev.filter(item => item.id !== id));
+          if (selectedChat?.id === id) {
+            setSelectedChat(null);
+          }
+          notification.success({
+            message: 'ลบข้อมูลเรียบร้อยแล้ว',
+            placement: 'topRight',
+          });
+        } catch (error) {
+          console.error("Error deleting history:", error);
+          notification.error({
+            message: 'เกิดข้อผิดพลาด',
+            description: 'ไม่สามารถลบข้อมูลได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง',
+            placement: 'topRight',
+          });
+        }
+      },
+    });
   };
 
   return (

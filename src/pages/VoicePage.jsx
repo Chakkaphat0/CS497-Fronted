@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
+import { App } from 'antd'
 import Sidebar from '../components/Sidebar'
 
 export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, toggleTheme }) {
+  const { notification, modal } = App.useApp()
   const [mode, setMode] = useState('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [micStatus, setMicStatus] = useState('idle') // 'idle', 'error', 'listening'
@@ -148,7 +150,11 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
     if (!success) {
       setIsRecording(false)
       setMicStatus('error')
-      alert('ไม่สามารถเข้าถึงไมโครโฟนได้ กรุณาตรวจสอบการอนุญาตใช้งานในเบราว์เซอร์')
+      modal.error({
+        title: 'ไม่สามารถเข้าถึงไมโครโฟนได้',
+        content: 'กรุณาตรวจสอบการอนุญาตใช้งานไมโครโฟนในการตั้งค่าเบราว์เซอร์ของคุณ เพื่อใช้งานระบบสัมภาษณ์ด้วยเสียง',
+        okText: 'รับทราบ',
+      });
     }
   }
 
@@ -157,7 +163,11 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
     const success = await setupAudioVisualization(testVisualizerRef, 'test')
     if (!success) {
       setIsTestingMic(false)
-      alert('ไม่สามารถเข้าถึงไมโครโฟนตัวที่เลือกได้')
+      notification.warning({
+        message: 'เชื่อมต่อไมโครโฟนไม่สำเร็จ',
+        description: 'ไม่สามารถเข้าถึงไมโครโฟนตัวที่เลือกได้ กรุณาลองเลือกตัวอื่นหรือตรวจสอบการเชื่อมต่อ',
+        placement: 'topRight',
+      });
     }
   }
 

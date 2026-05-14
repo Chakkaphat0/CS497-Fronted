@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
+import { App } from 'antd'
 import { auth, storage } from '../firebase'
 import { updateProfile } from 'firebase/auth'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 export default function ProfilePage({ onBack, onLogout }) {
+  const { notification, message: messageApi } = App.useApp()
   const [user, setUser] = useState(auth.currentUser)
   const [displayName, setDisplayName] = useState(user?.displayName || '')
   const [photoURL, setPhotoURL] = useState(user?.photoURL || '')
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState('')
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((u) => {
@@ -25,7 +26,6 @@ export default function ProfilePage({ onBack, onLogout }) {
   const handleUpdateProfile = async (e) => {
     e.preventDefault()
     setLoading(true)
-    setMessage('')
     try {
       let newPhotoURL = photoURL
       
@@ -41,9 +41,17 @@ export default function ProfilePage({ onBack, onLogout }) {
       })
       
       setPhotoURL(newPhotoURL)
-      setMessage('Profile updated successfully!')
+      notification.success({
+        message: 'อัปเดตโปรไฟล์สำเร็จ',
+        description: 'ข้อมูลส่วนตัวของคุณถูกบันทึกเรียบร้อยแล้ว',
+        placement: 'topRight',
+      })
     } catch (error) {
-      setMessage(`Error: ${error.message}`)
+      notification.error({
+        message: 'เกิดข้อผิดพลาด',
+        description: error.message,
+        placement: 'topRight',
+      })
     }
     setLoading(false)
   }
@@ -68,12 +76,6 @@ export default function ProfilePage({ onBack, onLogout }) {
 
       <div className="glass-panel w-full max-w-md p-8 rounded-[2rem] bg-white dark:bg-gray-900 shadow-xl border border-gray-100 dark:border-gray-800">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 text-center">Your Profile</h2>
-        
-        {message && (
-          <div className={`p-3 rounded-lg mb-6 text-sm text-center ${message.includes('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-            {message}
-          </div>
-        )}
 
         <div className="flex flex-col items-center mb-8">
           <div className="w-32 h-32 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden mb-4 border-4 border-primary-100 dark:border-primary-900">

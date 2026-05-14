@@ -1,16 +1,16 @@
 import { useState } from 'react'
+import { App } from 'antd'
 import { auth } from '../firebase'
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth'
 
 export default function LoginPage({ onLogin }) {
+  const { notification, message: messageApi } = App.useApp()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isRegistering, setIsRegistering] = useState(false)
-  const [error, setError] = useState('')
 
   const handleAuth = async (e) => {
     e.preventDefault();
-    setError('');
     if (email && password) {
       try {
         if (isRegistering) {
@@ -20,7 +20,11 @@ export default function LoginPage({ onLogin }) {
         }
         onLogin();
       } catch (err) {
-        setError(err.message);
+        notification.error({
+          message: isRegistering ? 'ลงทะเบียนไม่สำเร็จ' : 'เข้าสู่ระบบไม่สำเร็จ',
+          description: err.message,
+          placement: 'topRight',
+        });
       }
     }
   }
@@ -84,7 +88,6 @@ export default function LoginPage({ onLogin }) {
             <button
               type="button"
               onClick={async () => {
-                setError('');
                 const testEmail = 'test@example.com';
                 const testPassword = 'password123';
                 try {
@@ -97,10 +100,10 @@ export default function LoginPage({ onLogin }) {
                       await createUserWithEmailAndPassword(auth, testEmail, testPassword);
                       onLogin();
                     } catch (registerErr) {
-                      setError(registerErr.message);
+                      notification.error({ message: 'Error', description: registerErr.message });
                     }
                   } else {
-                    setError(err.message);
+                    notification.error({ message: 'Error', description: err.message });
                   }
                 }
               }}
@@ -113,7 +116,7 @@ export default function LoginPage({ onLogin }) {
 
         <div className="mt-6 text-center">
           <button 
-            onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
+            onClick={() => { setIsRegistering(!isRegistering); }}
             className="text-primary-600 dark:text-primary-400 hover:underline text-sm font-medium"
           >
             {isRegistering ? 'Already have an account? Sign In' : 'Need an account? Register'}
