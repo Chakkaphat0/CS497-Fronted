@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
 import { auth, db } from '../firebase'
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore'
+import { collection, query, where, orderBy, getDocs, doc, deleteDoc } from 'firebase/firestore'
 
 export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
   const [history, setHistory] = useState([])
@@ -38,6 +38,21 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
     };
     fetchHistory();
   }, [])
+
+  const handleDelete = async (id, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm("คุณแน่ใจหรือไม่ว่าต้องการลบประวัตินี้?")) return;
+    try {
+      await deleteDoc(doc(db, 'chatHistory', id));
+      setHistory(prev => prev.filter(item => item.id !== id));
+      if (selectedChat?.id === id) {
+        setSelectedChat(null);
+      }
+    } catch (error) {
+      console.error("Error deleting history:", error);
+      alert("เกิดข้อผิดพลาดในการลบข้อมูล");
+    }
+  };
 
   return (
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
@@ -128,10 +143,21 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
                           : "No conversation data"}
                       </p>
                     </div>
-                    <div className="w-10 h-10 rounded-full bg-gray-50 dark:bg-gray-800 flex items-center justify-center text-primary-500 opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-1">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={(e) => handleDelete(chat.id, e)}
+                        className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 opacity-0 group-hover:opacity-100 transition-all z-10"
+                        title="Delete History"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                      <div className="w-10 h-10 rounded-full bg-gray-50 dark:bg-gray-800 flex items-center justify-center text-primary-500 opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -152,14 +178,25 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
                   {selectedChat.timestamp ? new Date(selectedChat.timestamp.toDate()).toLocaleString() : 'Unknown Time'}
                 </p>
               </div>
-              <button 
-                onClick={() => setSelectedChat(null)}
-                className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 flex items-center justify-center text-gray-600 dark:text-gray-300 transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={(e) => handleDelete(selectedChat.id, e)}
+                  className="w-10 h-10 rounded-full bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 flex items-center justify-center text-red-500 transition-colors"
+                  title="Delete History"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+                <button 
+                  onClick={() => setSelectedChat(null)}
+                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 flex items-center justify-center text-gray-600 dark:text-gray-300 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
             
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50 dark:bg-gray-950/50">

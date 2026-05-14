@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { App } from 'antd'
 import Sidebar from '../components/Sidebar'
 import { sendMessageToWebhook, getConfig } from '../services/webhookService'
 import { connectSSE, disconnectSSE } from '../services/sseService'
@@ -8,6 +9,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
 const CONFIG = getConfig()
 
 export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
+  const { notification } = App.useApp()
   const [messages, setMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
   const [mode, setMode] = useState('normal')
@@ -67,10 +69,20 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
           timestamp: serverTimestamp(),
           mode: mode
         }).then(() => {
-           alert('บันทึกประวัติการสนทนาเรียบร้อยแล้ว!');
+          notification.success({
+            message: 'บันทึกสำเร็จ!',
+            description: 'บันทึกประวัติการสนทนาเรียบร้อยแล้ว',
+            placement: 'topRight',
+            duration: 4,
+          });
         }).catch((err) => {
-           console.error('Error saving chat:', err);
-           alert('ไม่สามารถบันทึกประวัติการสนทนาได้');
+          console.error('Error saving chat:', err);
+          notification.error({
+            message: 'เกิดข้อผิดพลาด',
+            description: 'ไม่สามารถบันทึกประวัติการสนทนาได้ กรุณาลองใหม่อีกครั้ง',
+            placement: 'topRight',
+            duration: 5,
+          });
         });
       }
     }
