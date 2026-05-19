@@ -51,7 +51,7 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
   // Connect to SSE on mount
   useEffect(() => {
     setConnectionStatus('connecting')
-    
+
     connectSSE(
       (data) => {
         if (data.type === 'connected') {
@@ -125,9 +125,9 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
   const handleStartConversation = async () => {
     setIsStarted(true)
     setIsLoading(true)
-    const startMsg = mode === 'virtual' ? 'Virtual mode' : 'Normal mode'
+    const startMsg = 'สวัสดี'
     setMessages([{ type: 'user', text: startMsg }])
-    
+
     try {
       const result = await sendMessageToWebhook(startMsg, mode, CONFIG.signingSecret)
       if (!result.success) {
@@ -164,10 +164,10 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
     if (!isStarted || isEnded) return;
     setIsEnded(true)
     setIsLoading(true)
-    
+
     const endMsg = 'จบการสนทนา'
     setMessages(prev => [...prev, { type: 'user', text: endMsg }])
-    
+
     try {
       const result = await sendMessageToWebhook(endMsg, mode, CONFIG.signingSecret)
       if (!result.success) {
@@ -231,10 +231,10 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
 
   return (
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
-      <Sidebar 
-        activeTab="chat" 
+      <Sidebar
+        activeTab="chat"
         onGoDashboard={onGoHome}
-        onGoVoice={onGoVoice} 
+        onGoVoice={onGoVoice}
         onGoHistory={onGoHistory}
         onLogout={onLogout}
       />
@@ -244,21 +244,19 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
         <header className="h-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-8 z-10 sticky top-0 shrink-0">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Chat Interview</h1>
-            <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${
-              connectionStatus === 'connected' ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' : 
-              connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400' : 
-              'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${
-                connectionStatus === 'connected' ? 'bg-green-500' : 
-                connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 
-                'bg-red-500'
-              }`}></span>
-              {connectionStatus === 'connected' ? 'Online' : 
-               connectionStatus === 'connecting' ? 'Connecting...' : 
-               'Offline'}
+            <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${connectionStatus === 'connected' ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' :
+                connectionStatus === 'connecting' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400' :
+                  'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+              }`}>
+              <span className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' :
+                  connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                    'bg-red-500'
+                }`}></span>
+              {connectionStatus === 'connected' ? 'Online' :
+                connectionStatus === 'connecting' ? 'Connecting...' :
+                  'Offline'}
             </div>
-            
+
             {isStarted && !isEnded && (
               <button
                 onClick={handleEndConversation}
@@ -331,11 +329,10 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
               ) : (
                 messages.map((msg, idx) => (
                   <div key={idx} className={`flex ${msg.type === 'ai' ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`max-w-[80%] lg:max-w-[70%] rounded-2xl px-6 py-4 shadow-sm ${
-                      msg.type === 'ai'
+                    <div className={`max-w-[80%] lg:max-w-[70%] rounded-2xl px-6 py-4 shadow-sm ${msg.type === 'ai'
                         ? 'bg-gray-100 dark:bg-gray-800/80 text-gray-800 dark:text-gray-100 rounded-tl-none'
                         : 'bg-primary-600 text-white rounded-tr-none'
-                    }`}>
+                      }`}>
                       {msg.type === 'ai' && (
                         <div className="flex items-center gap-2 mb-2">
                           <div className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900/50 flex items-center justify-center text-xs">
@@ -349,7 +346,7 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
                   </div>
                 ))
               )}
-              
+
               {isLoading && isStarted && (
                 <div className="flex justify-start">
                   <div className="bg-gray-100 dark:bg-gray-800/80 rounded-2xl rounded-tl-none px-6 py-5 shadow-sm flex gap-1.5 items-center">
@@ -386,7 +383,7 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
                       rows="1"
                     />
                   </div>
-                  <button 
+                  <button
                     onClick={handleSendMessage}
                     disabled={isLoading || !inputValue.trim() || isEnded}
                     className="w-14 h-14 shrink-0 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white rounded-2xl flex items-center justify-center shadow-lg transition-all hover-lift"
@@ -413,11 +410,10 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
               <button
                 onClick={() => setMode('normal')}
                 disabled={isStarted}
-                className={`w-full text-left p-5 rounded-2xl transition-all border ${
-                  mode === 'normal'
+                className={`w-full text-left p-5 rounded-2xl transition-all border ${mode === 'normal'
                     ? 'bg-white dark:bg-gray-800 border-primary-500 shadow-md ring-1 ring-primary-500'
                     : 'bg-white/50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700'
-                } ${isStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  } ${isStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <div className="flex justify-between items-center mb-2">
                   <h4 className="font-bold text-lg text-gray-900 dark:text-white">Normal Mode</h4>
@@ -431,11 +427,10 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
               <button
                 onClick={() => setMode('virtual')}
                 disabled={isStarted}
-                className={`w-full text-left p-5 rounded-2xl transition-all border ${
-                  mode === 'virtual'
+                className={`w-full text-left p-5 rounded-2xl transition-all border ${mode === 'virtual'
                     ? 'bg-white dark:bg-gray-800 border-purple-500 shadow-md ring-1 ring-purple-500'
                     : 'bg-white/50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700'
-                } ${isStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  } ${isStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <div className="flex justify-between items-center mb-2">
                   <h4 className="font-bold text-lg text-gray-900 dark:text-white">Virtual Mode</h4>
@@ -446,14 +441,14 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
                 </p>
               </button>
             </div>
-            
+
             <div className="mt-8 bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-200 dark:border-gray-700">
-               <h4 className="font-bold text-sm text-gray-900 dark:text-white mb-2">Tips</h4>
-               <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-2 list-disc pl-4">
-                 <li>Be concise and clear in your answers.</li>
-                 <li>Use the STAR method (Situation, Task, Action, Result).</li>
-                 <li>Take a deep breath before responding.</li>
-               </ul>
+              <h4 className="font-bold text-sm text-gray-900 dark:text-white mb-2">Tips</h4>
+              <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-2 list-disc pl-4">
+                <li>Be concise and clear in your answers.</li>
+                <li>Use the STAR method (Situation, Task, Action, Result).</li>
+                <li>Take a deep breath before responding.</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -468,7 +463,7 @@ export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, i
               <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white">ผลการสัมภาษณ์</h2>
               <p className="text-gray-500 mt-1">คุณต้องการรับคะแนนนี้ไหม?</p>
             </div>
-            
+
             <div className="space-y-3 mb-6">
               {Object.entries(parsedScores).map(([key, val]) => (
                 <div key={key} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">

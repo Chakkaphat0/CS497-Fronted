@@ -29,6 +29,7 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
   const [mode, setMode] = useState('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [micStatus, setMicStatus] = useState('idle') // 'idle', 'error', 'listening'
+  const isRecordingRef = useRef(false) // ref to track recording inside callbacks
   
   // New Chat States
   const [messages, setMessages] = useState([])
@@ -166,36 +167,67 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
     }
   }, [isEnded, isSaving, messages, mode, parsedScores])
 
-  // Initialize Speech Recognition
-  useEffect(() => {
+  // Create a fresh SpeechRecognition instance (Chrome is unreliable when reusing)
+  const createRecognition = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'th-TH';
-      recognition.interimResults = true;
-      recognition.continuous = true;
+    if (!SpeechRecognition) return null;
 
-      recognition.onresult = (event) => {
-        let finalText = accumulatedTextRef.current;
-        let interimText = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalText += event.results[i][0].transcript;
-            accumulatedTextRef.current = finalText;
-          } else {
-            interimText += event.results[i][0].transcript;
-          }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'th-TH';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let finalText = accumulatedTextRef.current;
+      let interimText = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += transcript;
+          accumulatedTextRef.current = finalText;
+        } else {
+          interimText += transcript;
         }
-        setSubtitle(finalText + interimText);
-      };
+      }
+      const display = finalText + interimText;
+      setSubtitle(display);
+      console.log('[STT] result:', display.slice(-80));
+    };
 
-      recognition.onend = () => {
-        console.log('Speech recognition ended');
-      };
+    recognition.onend = () => {
+      console.log('[STT] onend, isRecording:', isRecordingRef.current);
+      // Auto-restart if still recording (Chrome stops after silence/timeout)
+      if (isRecordingRef.current) {
+        setTimeout(() => {
+          if (isRecordingRef.current) {
+            try {
+              console.log('[STT] auto-restarting...');
+              recognition.start();
+            } catch (e) {
+              console.error('[STT] restart failed, creating new instance');
+              const newRec = createRecognition();
+              if (newRec) {
+                recognitionRef.current = newRec;
+                try { newRec.start(); } catch(e2) {}
+              }
+            }
+          }
+        }, 300);
+      }
+    };
 
-      recognitionRef.current = recognition;
-    }
-  }, []);
+    recognition.onerror = (event) => {
+      console.error('[STT] error:', event.error);
+      if (event.error === 'not-allowed' || event.error === 'service-not-available') {
+        isRecordingRef.current = false;
+        setMicStatus('error');
+      }
+      // 'no-speech', 'aborted', 'network' are recoverable via onend auto-restart
+    };
+
+    return recognition;
+  };
 
   const generateVoice = async (text) => {
     try {
@@ -248,9 +280,17 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
   }
 
   const stopInterviewMic = () => {
+    // Set ref FIRST so onend won't auto-restart
+    isRecordingRef.current = false;
     stopAudioTracks()
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.abort();
+      } catch(e) {}
+      recognitionRef.current = null;
     }
     if (visualizerRef.current) {
       visualizerRef.current.style.transform = 'scale(1)'
@@ -271,9 +311,16 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
   }
 
   const handleCancelSpeech = () => {
+    isRecordingRef.current = false;
     stopAudioTracks()
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.abort();
+      } catch(e) {}
+      recognitionRef.current = null;
     }
     if (visualizerRef.current) {
       visualizerRef.current.style.transform = 'scale(1)'
@@ -358,30 +405,53 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
   const startInterviewMic = async () => {
     if (!isStarted) {
       setIsStarted(true);
-      // Send mode prefix as first message
-      const modeMsg = mode === 'virtual' ? 'Virtual mode' : 'Normal mode';
+      // Send greeting as first message
+      const modeMsg = 'สวัสดี';
       setMessages(prev => [...prev, { type: 'user', text: modeMsg }]);
       handleSendToAI(modeMsg);
     }
+    isRecordingRef.current = true;
     setIsRecording(true)
     setMicStatus('listening')
     accumulatedTextRef.current = '';
     setSubtitle('')
     setAiSubtitle('')
     
+    // Stop old recognition cleanly, then create a fresh instance
     if (recognitionRef.current) {
       try {
-        recognitionRef.current.start();
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.abort();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
+    const rec = createRecognition();
+    recognitionRef.current = rec;
+    if (rec) {
+      try {
+        rec.start();
+        console.log('[STT] started fresh recognition');
       } catch (e) {
-        console.error('Recognition start error:', e);
+        console.error('[STT] start error:', e);
       }
     }
 
     const success = await setupAudioVisualization(visualizerRef, 'interview')
     if (!success) {
+      isRecordingRef.current = false;
       setIsRecording(false)
       setMicStatus('error')
-      if (recognitionRef.current) recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.onresult = null;
+          recognitionRef.current.abort();
+        } catch (e) {}
+        recognitionRef.current = null;
+      }
       modal.error({
         title: 'ไม่สามารถเข้าถึงไมโครโฟนได้',
         content: 'กรุณาตรวจสอบการอนุญาตใช้งานไมโครโฟนในการตั้งค่าเบราว์เซอร์ของคุณ เพื่อใช้งานระบบสัมภาษณ์ด้วยเสียง',
@@ -746,17 +816,7 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
               )
             })()}
 
-            {mode === 'normal' ? (
-              <div className="text-center">
-                <p className="text-sm text-amber-600 dark:text-amber-400 mb-4 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800/50">
-                  ⚠️ โหมด Normal จะไม่ถูกบันทึกคะแนนลงในโปรไฟล์ของคุณ (ดูได้เฉพาะในประวัติ)
-                </p>
-                <button onClick={() => setShowScoreModal(false)} className="w-full py-3 rounded-xl font-bold text-white bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600 transition-all">
-                  ปิด
-                </button>
-              </div>
-            ) : (
-              <div className="flex gap-3">
+            <div className="flex gap-3">
                 <button onClick={() => {
                   setShowScoreModal(false)
                   notification.info({ message: 'ปฏิเสธคะแนน', description: 'คะแนนจะไม่ถูกบันทึก คุณสามารถสัมภาษณ์ใหม่ได้', placement: 'topRight' })
@@ -786,7 +846,6 @@ export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, i
                   ✅ รับคะแนน
                 </button>
               </div>
-            )}
           </div>
         </div>
       )}
