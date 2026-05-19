@@ -77,7 +77,7 @@ export default function LoginPage({ onLogin }) {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Account Type</label>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'candidate', icon: '🎓', label: 'Candidate' },
+                  { id: 'candidate', icon: '🎓', label: 'Interview' },
                   { id: 'enterprise', icon: '🏢', label: 'Enterprise' },
                   { id: 'university', icon: '🏛️', label: 'University' },
                 ].map(t => (

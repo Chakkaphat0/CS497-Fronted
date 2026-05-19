@@ -62,7 +62,7 @@ export default function AdminDashboard({ onLogout, onChangeRole, isDark, toggleT
     setPositions(prev => prev.filter(p => p.id !== id))
   }
 
-  const tabs = [{ id: 'users', icon: '👥', label: 'Users' }, { id: 'universities', icon: '🏛️', label: 'Universities' }, { id: 'positions', icon: '💼', label: 'Positions' }, { id: 'candidates', icon: '🎓', label: 'Candidates' }, { id: 'platform', icon: '⚙️', label: 'Platform' }]
+  const tabs = [{ id: 'users', icon: '👥', label: 'Users' }, { id: 'universities', icon: '🏛️', label: 'Universities' }, { id: 'positions', icon: '💼', label: 'Positions' }, { id: 'candidates', icon: '🎓', label: 'Interviews' }, { id: 'platform', icon: '⚙️', label: 'Platform' }]
 
   return (
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 font-sans ${isDark ? 'dark' : ''}`}>
@@ -93,7 +93,7 @@ export default function AdminDashboard({ onLogout, onChangeRole, isDark, toggleT
         <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6">
           {/* Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[{ icon: '👥', label: 'Users', value: users.length }, { icon: '🏛️', label: 'Universities', value: universities.length }, { icon: '🎓', label: 'Candidates', value: candidates.length }, { icon: '📊', label: 'Avg Score', value: candidates.length > 0 ? (candidates.reduce((a, c) => a + (c.scores?.overall || 0), 0) / candidates.length).toFixed(1) : '—' }].map((s, i) => (
+            {[{ icon: '👥', label: 'Users', value: users.length }, { icon: '🏛️', label: 'Universities', value: universities.length }, { icon: '🎓', label: 'Interviews', value: candidates.length }, { icon: '📊', label: 'Avg Score', value: candidates.length > 0 ? (candidates.reduce((a, c) => a + (c.scores?.overall || 0), 0) / candidates.length).toFixed(1) : '—' }].map((s, i) => (
               <div key={i} className="bg-white dark:bg-gray-800/80 rounded-2xl p-5 border border-gray-100 dark:border-gray-700/50">
                 <div className="flex items-center gap-2 mb-1"><span>{s.icon}</span><span className="text-xs font-bold text-gray-400 uppercase">{s.label}</span></div>
                 <p className="text-3xl font-extrabold text-gray-900 dark:text-white">{s.value}</p>
@@ -108,7 +108,7 @@ export default function AdminDashboard({ onLogout, onChangeRole, isDark, toggleT
               <div className="flex gap-3 mb-6">
                 <input value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} placeholder="Email..." className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm text-gray-900 dark:text-white outline-none" />
                 <select value={newUserRole} onChange={e => setNewUserRole(e.target.value)} className="px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm text-gray-900 dark:text-white outline-none">
-                  <option value="candidate">Candidate</option><option value="employer">Employer</option><option value="university">University</option><option value="admin">Admin</option>
+                  <option value="candidate">Interview</option><option value="employer">Employer</option><option value="university">University</option><option value="admin">Admin</option>
                 </select>
                 <button onClick={addUser} className="px-6 py-2.5 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition">+ Add</button>
               </div>
@@ -141,10 +141,10 @@ export default function AdminDashboard({ onLogout, onChangeRole, isDark, toggleT
             </div>
           )}
 
-          {/* Candidates Tab */}
+          {/* Interviews Tab */}
           {activeTab === 'candidates' && (
             <div className="bg-white dark:bg-gray-800/80 rounded-2xl p-6 border border-gray-100 dark:border-gray-700/50">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">All Candidates (Firebase)</h3>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">All Interviews (Firebase)</h3>
               <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr className="border-b border-gray-100 dark:border-gray-700"><th className="pb-3 text-xs font-bold text-gray-400 uppercase">Name</th><th className="pb-3 text-xs font-bold text-gray-400 uppercase">Title</th><th className="pb-3 text-xs font-bold text-gray-400 uppercase">University</th><th className="pb-3 text-xs font-bold text-gray-400 uppercase text-center">Score</th><th className="pb-3 text-xs font-bold text-gray-400 uppercase">Tier</th></tr></thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 {candidates.map(c => (<tr key={c.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50"><td className="py-3 font-medium text-gray-900 dark:text-white text-sm">{c.name}</td><td className="py-3 text-sm text-gray-600 dark:text-gray-400">{c.title}</td><td className="py-3 text-sm text-gray-600 dark:text-gray-400">{c.university}</td><td className="py-3 text-center font-bold text-emerald-600">{(c.scores?.overall || 0).toFixed(1)}</td><td className="py-3"><span className={`px-2 py-0.5 rounded text-xs font-bold ${c.tier === 'premium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>{c.tier}</span></td></tr>))}

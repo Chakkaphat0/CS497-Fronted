@@ -49,10 +49,22 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
   const [scores, setScores] = useState({ technical: 0, communication: 0, problemSolving: 0, leadership: 0, creativity: 0 })
   const [overallScore, setOverallScore] = useState(0)
   const [scoreHistory, setScoreHistory] = useState([])
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const [activeTab, setActiveTab] = useState(() => sessionStorage.getItem('candidateTab') || 'dashboard')
   const [messages, setMessages] = useState([])
   const [msgInput, setMsgInput] = useState('')
-  const [msgTarget, setMsgTarget] = useState(null) // Which thread to reply to
+  const [msgTarget, setMsgTarget] = useState(() => {
+    const saved = sessionStorage.getItem('candidateMsgTarget')
+    return saved ? JSON.parse(saved) : null
+  })
+
+  useEffect(() => {
+    sessionStorage.setItem('candidateTab', activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    if (msgTarget) sessionStorage.setItem('candidateMsgTarget', JSON.stringify(msgTarget))
+    else sessionStorage.removeItem('candidateMsgTarget')
+  }, [msgTarget])
 
   useEffect(() => {
     if (!user) return
@@ -80,14 +92,16 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
       }
     }).catch(console.error)
     
-    // Fetch messages targeted at this candidate
+    // Fetch messages targeted at this user
     const qMsg = query(collection(db, 'employerMessages'), orderBy('timestamp', 'asc'))
     const unsubMsg = onSnapshot(qMsg, snap => {
-      // Filter locally to messages targeting the current user OR sent by the current user
       const allMsgs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      // We assume employer sends message with target: 'candidateName'. 
-      // If we are that candidate, or we sent it, we show it.
-      const myMsgs = allMsgs.filter(m => m.target === user.displayName || m.target === user.email || m.senderUid === user.uid)
+      const myMsgs = allMsgs.filter(m => 
+        m.senderUid === user.uid || 
+        m.targetUid === user.uid ||
+        m.target === user.displayName || 
+        m.target === user.email
+      )
       setMessages(myMsgs)
     })
     
@@ -95,12 +109,14 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
   }, [user])
 
   const sendMessage = async () => {
-    if (!msgInput.trim() || !user) return
+    if (!msgInput.trim() || !user || !msgTarget) return
     await addDoc(collection(db, 'employerMessages'), {
       senderUid: user.uid,
-      senderName: user.displayName || user.email?.split('@')[0] || 'Candidate',
+      senderName: user.displayName || user.email?.split('@')[0] || 'Interview',
       senderEmail: user.email || '',
-      target: msgTarget || 'Employer',
+      targetUid: msgTarget.uid || '',
+      targetName: msgTarget.name || 'Unknown',
+      target: msgTarget.name || 'Unknown',
       text: msgInput,
       timestamp: serverTimestamp()
     })
@@ -140,10 +156,10 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
         <header className="h-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-8 z-10 shrink-0">
-          <div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">{activeTab === 'dashboard' ? 'Candidate Dashboard' : 'Messages'}</h1><p className="text-sm text-gray-500">Welcome, {user?.displayName || user?.email?.split('@')[0] || 'Candidate'}</p></div>
+          <div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">{activeTab === 'dashboard' ? 'Interview Dashboard' : 'Messages'}</h1><p className="text-sm text-gray-500">Welcome, {user?.displayName || user?.email?.split('@')[0] || 'Interview'}</p></div>
           <div className="flex items-center gap-4">
             <button onClick={toggleTheme} className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition">{isDark ? '☀️' : '🌙'}</button>
-            <button onClick={onGoProfile} className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 text-white flex items-center justify-center font-bold shadow-md text-sm">{user?.displayName?.charAt(0) || user?.email?.charAt(0)?.toUpperCase() || 'C'}</button>
+            <button onClick={onGoProfile} className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 text-white flex items-center justify-center font-bold shadow-md text-sm">{user?.displayName?.charAt(0) || user?.email?.charAt(0)?.toUpperCase() || 'I'}</button>
           </div>
         </header>
 
@@ -162,7 +178,7 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard icon="🏆" label="Overall Score" value={overallScore.toFixed(1)} sub="out of 10.0" gradient="from-amber-400 to-orange-500" />
             <StatCard icon="🎯" label="Interviews Done" value={interviewCount} sub="total sessions" gradient="from-blue-400 to-cyan-500" />
-            <StatCard icon="📈" label="Rank Percentile" value="Top 15%" sub="among all candidates" gradient="from-purple-400 to-pink-500" />
+            <StatCard icon="📈" label="Rank Percentile" value="Top 15%" sub="among all interviews" gradient="from-purple-400 to-pink-500" />
             <StatCard icon="👀" label="Profile Views" value="—" sub="Upgrade to see" gradient="from-gray-300 to-gray-400" />
           </div>
 
@@ -237,21 +253,39 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
               <h2 className="text-lg font-bold text-gray-900 dark:text-white">Conversations</h2>
             </div>
             <div className="flex-1 overflow-y-auto">
-              {Array.from(new Set(messages.map(m => m.senderUid === user?.uid ? m.target : m.senderName))).filter(Boolean).map(contact => (
-                <button
-                  key={contact}
-                  onClick={() => setMsgTarget(contact)}
-                  className={`w-full text-left px-4 py-4 border-b border-gray-100 dark:border-gray-800 transition-colors ${msgTarget === contact ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}
-                >
-                  <div className="font-semibold text-gray-900 dark:text-white truncate">{contact}</div>
-                  <div className="text-xs text-gray-500 truncate">
-                    {messages.filter(m => m.senderName === contact || m.target === contact).pop()?.text || 'No messages'}
-                  </div>
-                </button>
-              ))}
-              {Array.from(new Set(messages.map(m => m.senderUid === user?.uid ? m.target : m.senderName))).filter(Boolean).length === 0 && (
-                <div className="p-6 text-center text-gray-500 text-sm">No conversations yet</div>
-              )}
+              {(() => {
+                const uid = user?.uid
+                const contactMap = new Map()
+                messages.forEach(m => {
+                  if (m.senderUid === uid) {
+                    const cUid = m.targetUid || ''
+                    const cName = m.targetName || m.target || 'Unknown'
+                    if (cUid || cName !== 'Unknown') contactMap.set(cUid || cName, { uid: cUid, name: cName })
+                  } else {
+                    const cUid = m.senderUid || ''
+                    const cName = m.senderName || 'Unknown'
+                    if (cUid || cName !== 'Unknown') contactMap.set(cUid || cName, { uid: cUid, name: cName })
+                  }
+                })
+                const contacts = Array.from(contactMap.values())
+                return contacts.length === 0 ? (
+                  <div className="p-6 text-center text-gray-500 text-sm">No conversations yet</div>
+                ) : contacts.map(contact => (
+                  <button
+                    key={contact.uid || contact.name}
+                    onClick={() => setMsgTarget(contact)}
+                    className={`w-full text-left px-4 py-4 border-b border-gray-100 dark:border-gray-800 transition-colors ${(msgTarget?.uid && msgTarget.uid === contact.uid) || (!msgTarget?.uid && msgTarget?.name === contact.name) ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}
+                  >
+                    <div className="font-semibold text-gray-900 dark:text-white truncate">{contact.name}</div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {messages.filter(m => {
+                        if (contact.uid && uid) return (m.senderUid === uid && m.targetUid === contact.uid) || (m.senderUid === contact.uid && m.targetUid === uid)
+                        return m.senderName === contact.name || m.target === contact.name
+                      }).pop()?.text || 'No messages'}
+                    </div>
+                  </button>
+                ))
+              })()}
             </div>
           </div>
           {/* Chat Window */}
@@ -261,10 +295,14 @@ export default function CandidateDashboard({ onGoChat, onGoVoice, onGoHistory, o
             ) : (
               <>
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-                  <h3 className="font-bold text-gray-900 dark:text-white">{msgTarget}</h3>
+                  <h3 className="font-bold text-gray-900 dark:text-white">{msgTarget.name}</h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {messages.filter(m => m.target === msgTarget || (m.senderUid !== user?.uid && m.senderName === msgTarget)).map(m => {
+                  {messages.filter(m => {
+                    const uid = user?.uid
+                    if (msgTarget.uid && uid) return (m.senderUid === uid && m.targetUid === msgTarget.uid) || (m.senderUid === msgTarget.uid && m.targetUid === uid)
+                    return m.target === msgTarget.name || m.senderName === msgTarget.name
+                  }).map(m => {
                     const isMe = user && m.senderUid === user.uid
                     return (
                       <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>

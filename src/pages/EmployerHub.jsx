@@ -4,21 +4,22 @@ import { auth, db } from '../firebase'
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore'
 
 // ─── Score Badge (mini) ─────────────────────────────────────────────
-function MiniScoreBadge({ label, score }) {
-  const getColor = (s) => {
-    if (s >= 9.0) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-    if (s >= 8.0) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
-    if (s >= 7.0) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+function MiniScoreBadge({ label, score = 0 }) {
+  const s = Number(score) || 0
+  const getColor = (val) => {
+    if (val >= 9.0) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+    if (val >= 8.0) return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
+    if (val >= 7.0) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
     return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
   }
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md ${getColor(score)}`}>
-      {label}: {score.toFixed(1)}
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md ${getColor(s)}`}>
+      {label}: {s.toFixed(1)}
     </span>
   )
 }
 
-// ─── Candidate Card ─────────────────────────────────────────────────
+// ─── Interview Card ─────────────────────────────────────────────────
 function CandidateCard({ candidate, employerTier, onViewProfile, onMessage }) {
   const isBlurred = employerTier === 'free'
   const showDM = employerTier === 'enterprise'
@@ -104,7 +105,7 @@ function CandidateCard({ candidate, employerTier, onViewProfile, onMessage }) {
 export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleTheme }) {
   const [employerTier, setEmployerTier] = useState('free')
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
-  const [activeTab, setActiveTab] = useState('search') // 'search','analytics','messages'
+  const [activeTab, setActiveTab] = useState(() => sessionStorage.getItem('employerTab') || 'search') // 'search','analytics','messages'
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTitle, setSelectedTitle] = useState('')
   const [selectedSkills, setSelectedSkills] = useState([])
@@ -114,8 +115,20 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
   const [skillSearch, setSkillSearch] = useState('')
   const [messages, setMessages] = useState([])
   const [msgInput, setMsgInput] = useState('')
-  const [msgTarget, setMsgTarget] = useState(null)
+  const [msgTarget, setMsgTarget] = useState(() => {
+    const saved = sessionStorage.getItem('employerMsgTarget')
+    return saved ? JSON.parse(saved) : null
+  })
   const [realCandidates, setRealCandidates] = useState([])
+
+  useEffect(() => {
+    sessionStorage.setItem('employerTab', activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    if (msgTarget) sessionStorage.setItem('employerMsgTarget', JSON.stringify(msgTarget))
+    else sessionStorage.removeItem('employerMsgTarget')
+  }, [msgTarget])
   const [dbPositions, setDbPositions] = useState([])
 
   // Load real candidates from candidates collection
@@ -126,13 +139,18 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
         const data = docSnap.data()
         return {
           id: data.uid || docSnap.id,
-          name: data.name || data.displayName || 'Unknown Candidate',
-          title: data.title || 'Candidate',
+          name: data.name || data.displayName || 'Unknown Interview',
+          title: data.title || 'Interview',
           university: data.university || 'Other',
           skills: data.skills || ['Communication'],
           experience: data.experience || '1 year',
           tier: data.tier || 'free',
-          scores: data.scores || { overall: 0, technical: 0, communication: 0, problemSolving: 0 }
+          scores: {
+            overall: data.scores?.overall || 0,
+            technical: data.scores?.technical || 0,
+            communication: data.scores?.communication || 0,
+            problemSolving: data.scores?.problemSolving || 0
+          }
         }
       })
       setRealCandidates(list)
@@ -140,11 +158,14 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
     return unsub
   }, [])
 
-  // Load messages from Firebase
+  // Load messages from Firebase (filtered for current user)
   useEffect(() => {
     const q = query(collection(db, 'employerMessages'), orderBy('timestamp', 'asc'))
     const unsub = onSnapshot(q, snap => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      const allMsgs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const uid = auth.currentUser?.uid
+      const myMsgs = allMsgs.filter(m => m.senderUid === uid || m.targetUid === uid)
+      setMessages(myMsgs)
     }, () => {})
     
     // Load positions
@@ -156,13 +177,15 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
   }, [])
 
   const sendMessage = async () => {
-    if (!msgInput.trim() || !auth.currentUser) return
+    if (!msgInput.trim() || !auth.currentUser || !msgTarget) return
     const user = auth.currentUser
     await addDoc(collection(db, 'employerMessages'), {
       senderUid: user.uid,
       senderName: user.displayName || user.email?.split('@')[0] || 'Employer',
       senderEmail: user.email || '',
-      target: msgTarget?.name || 'General',
+      targetUid: msgTarget.uid || '',
+      targetName: msgTarget.name || 'Unknown',
+      target: msgTarget.name || 'Unknown',
       text: msgInput,
       timestamp: serverTimestamp()
     })
@@ -196,6 +219,24 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
     setSelectedUniversity('')
     setScoreRange([0, 10])
   }
+
+  // Compute unique conversation contacts from messages
+  const msgContacts = useMemo(() => {
+    const uid = auth.currentUser?.uid
+    const map = new Map()
+    messages.forEach(m => {
+      if (m.senderUid === uid) {
+        const cUid = m.targetUid || ''
+        const cName = m.targetName || m.target || 'Unknown'
+        if (cUid || cName !== 'Unknown') map.set(cUid || cName, { uid: cUid, name: cName })
+      } else {
+        const cUid = m.senderUid || ''
+        const cName = m.senderName || 'Unknown'
+        if (cUid || cName !== 'Unknown') map.set(cUid || cName, { uid: cUid, name: cName })
+      }
+    })
+    return Array.from(map.values())
+  }, [messages])
 
   return (
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
@@ -253,7 +294,7 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{activeTab==='search'?'Talent Search':activeTab==='analytics'?'Analytics':'Messages'}</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {activeTab==='search' && <>{filteredCandidates.length} candidate{filteredCandidates.length!==1?'s':''} found · </>}
+              {activeTab==='search' && <>{filteredCandidates.length} interview{filteredCandidates.length!==1?'s':''} found · </>}
               <span className={`font-bold capitalize ${employerTier==='enterprise'?'text-purple-500':employerTier==='premium'?'text-blue-500':'text-gray-400'}`}>{employerTier} Plan</span>
             </p>
           </div>
@@ -280,8 +321,8 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-6 lg:p-8">
-            {filteredCandidates.length===0?(<div className="text-center py-20"><div className="text-5xl mb-4">🔍</div><h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">No candidates found</h3><p className="text-gray-500">Try adjusting your filters.</p><button onClick={clearFilters} className="mt-4 px-6 py-2.5 rounded-xl bg-purple-600 text-white font-medium">Clear All Filters</button></div>):(
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">{filteredCandidates.map(c=>(<CandidateCard key={c.id} candidate={c} employerTier={employerTier} onViewProfile={()=>{}} onMessage={(cand)=>{setMsgTarget(cand);setActiveTab('messages')}}/>))}</div>
+            {filteredCandidates.length===0?(<div className="text-center py-20"><div className="text-5xl mb-4">🔍</div><h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">No interviews found</h3><p className="text-gray-500">Try adjusting your filters.</p><button onClick={clearFilters} className="mt-4 px-6 py-2.5 rounded-xl bg-purple-600 text-white font-medium">Clear All Filters</button></div>):(
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">{filteredCandidates.map(c=>(<CandidateCard key={c.id} candidate={c} employerTier={employerTier} onViewProfile={()=>{}} onMessage={(cand)=>{setMsgTarget({uid:cand.id,name:cand.name});setActiveTab('messages')}}/>))}</div>
             )}
           </div>
         </div>
@@ -291,7 +332,7 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
         {activeTab==='analytics' && (
         <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[{icon:'👥',label:'Total Candidates',value:realCandidates.length},{icon:'🏆',label:'Avg Score',value:(realCandidates.length ? (realCandidates.reduce((a,c)=>a+c.scores.overall,0)/realCandidates.length).toFixed(1) : 0)},{icon:'📈',label:'High Performers',value:realCandidates.filter(c=>c.scores.overall>=8).length},{icon:'🎓',label:'Universities',value:[...new Set(realCandidates.map(c=>c.university))].length}].map((s,i)=>(
+            {[{icon:'👥',label:'Total Interviews',value:realCandidates.length},{icon:'🏆',label:'Avg Score',value:(realCandidates.length ? (realCandidates.reduce((a,c)=>a+c.scores.overall,0)/realCandidates.length).toFixed(1) : 0)},{icon:'📈',label:'High Performers',value:realCandidates.filter(c=>c.scores.overall>=8).length},{icon:'🎓',label:'Universities',value:[...new Set(realCandidates.map(c=>c.university))].length}].map((s,i)=>(
               <div key={i} className="bg-white dark:bg-gray-800/80 rounded-2xl p-5 border border-gray-100 dark:border-gray-700/50 hover:shadow-lg transition-all">
                 <div className="flex items-center gap-2 mb-1"><span className="text-lg">{s.icon}</span><span className="text-xs font-bold text-gray-400 uppercase">{s.label}</span></div>
                 <p className="text-3xl font-extrabold text-gray-900 dark:text-white">{s.value}</p>
@@ -307,7 +348,7 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
             <div className="space-y-4">{[...new Set(realCandidates.map(c=>c.university))].map(uni=>{const arr=realCandidates.filter(c=>c.university===uni); const avg=arr.reduce((a,c)=>a+c.scores.overall,0)/arr.length; return(<div key={uni}><div className="flex justify-between mb-1"><span className="text-sm font-medium text-gray-700 dark:text-gray-300">{uni}</span><span className="text-sm font-bold text-gray-900 dark:text-white">{avg.toFixed(1)} ({arr.length} students)</span></div><div className="w-full h-3 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-500" style={{width:`${(avg/10)*100}%`}}/></div></div>)})}</div>
           </div>
           <div className="bg-white dark:bg-gray-800/80 rounded-2xl p-6 border border-gray-100 dark:border-gray-700/50">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Top Skills Across Candidates</h3>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Top Skills Across Interviews</h3>
             <div className="flex flex-wrap gap-2">{Object.entries(realCandidates.reduce((acc,c)=>{c.skills.forEach(s=>{acc[s]=(acc[s]||0)+1});return acc},{})).sort((a,b)=>b[1]-a[1]).map(([skill,count])=>(<span key={skill} className="px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-sm font-medium border border-purple-200 dark:border-purple-800">{skill} <span className="text-xs opacity-60">({count})</span></span>))}</div>
           </div>
         </div>
@@ -322,19 +363,23 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
               <h2 className="text-lg font-bold text-gray-900 dark:text-white">Conversations</h2>
             </div>
             <div className="flex-1 overflow-y-auto">
-              {Array.from(new Set(messages.map(m => m.senderUid === auth.currentUser?.uid ? m.target : m.senderName))).filter(Boolean).map(contact => (
+              {msgContacts.map(contact => (
                 <button
-                  key={contact}
-                  onClick={() => setMsgTarget({ name: contact })}
-                  className={`w-full text-left px-4 py-4 border-b border-gray-100 dark:border-gray-800 transition-colors ${msgTarget?.name === contact ? 'bg-purple-50 dark:bg-purple-900/20 border-l-4 border-l-purple-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}
+                  key={contact.uid || contact.name}
+                  onClick={() => setMsgTarget(contact)}
+                  className={`w-full text-left px-4 py-4 border-b border-gray-100 dark:border-gray-800 transition-colors ${(msgTarget?.uid && msgTarget.uid === contact.uid) || (!msgTarget?.uid && msgTarget?.name === contact.name) ? 'bg-purple-50 dark:bg-purple-900/20 border-l-4 border-l-purple-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'}`}
                 >
-                  <div className="font-semibold text-gray-900 dark:text-white truncate">{contact}</div>
+                  <div className="font-semibold text-gray-900 dark:text-white truncate">{contact.name}</div>
                   <div className="text-xs text-gray-500 truncate">
-                    {messages.filter(m => m.senderName === contact || m.target === contact).pop()?.text || 'No messages'}
+                    {messages.filter(m => {
+                      const uid = auth.currentUser?.uid
+                      if (contact.uid) return (m.senderUid === uid && m.targetUid === contact.uid) || (m.senderUid === contact.uid && m.targetUid === uid)
+                      return m.senderName === contact.name || m.target === contact.name
+                    }).pop()?.text || 'No messages'}
                   </div>
                 </button>
               ))}
-              {Array.from(new Set(messages.map(m => m.senderUid === auth.currentUser?.uid ? m.target : m.senderName))).filter(Boolean).length === 0 && (
+              {msgContacts.length === 0 && (
                 <div className="p-6 text-center text-gray-500 text-sm">No conversations yet</div>
               )}
             </div>
@@ -342,14 +387,18 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
           {/* Chat Window */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {!msgTarget ? (
-              <div className="flex-1 flex items-center justify-center text-gray-400">Select a candidate to start messaging</div>
+              <div className="flex-1 flex items-center justify-center text-gray-400">Select an interview to start messaging</div>
             ) : (
               <>
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
                   <h3 className="font-bold text-gray-900 dark:text-white">{msgTarget.name}</h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {messages.filter(m => m.target === msgTarget.name || (m.senderUid !== auth.currentUser?.uid && m.senderName === msgTarget.name)).map(m => {
+                  {messages.filter(m => {
+                    const uid = auth.currentUser?.uid
+                    if (msgTarget.uid && uid) return (m.senderUid === uid && m.targetUid === msgTarget.uid) || (m.senderUid === msgTarget.uid && m.targetUid === uid)
+                    return m.target === msgTarget.name || m.senderName === msgTarget.name
+                  }).map(m => {
                     const isMe = auth.currentUser && m.senderUid === auth.currentUser.uid
                     return (
                       <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
@@ -391,11 +440,11 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
             {/* Modal Body */}
             <div className="p-8 space-y-5">
               {[
-                { icon: '👤', text: 'View full candidate names & profiles' },
-                { icon: '🎥', text: 'Access candidate AI interview video replays' },
-                { icon: '💬', text: 'Direct messaging with candidates' },
+                { icon: '👤', text: 'View full interview names & profiles' },
+                { icon: '🎥', text: 'Access interview AI video replays' },
+                { icon: '💬', text: 'Direct messaging with interviews' },
                 { icon: '📊', text: 'Advanced analytics & reporting' },
-                { icon: '🎯', text: 'Priority candidate matching' },
+                { icon: '🎯', text: 'Priority interview matching' },
               ].map((feature, i) => (
                 <div key={i} className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-900/30 flex items-center justify-center text-lg shrink-0">{feature.icon}</div>

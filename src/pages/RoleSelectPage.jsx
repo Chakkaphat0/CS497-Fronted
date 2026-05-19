@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { auth } from '../firebase'
 
 const roles = [
   {
     id: 'candidate',
     icon: '🎯',
-    title: 'Candidate',
+    title: 'Interview',
     subtitle: 'B2C',
     description: 'Practice AI interviews, build your score profile, and get discovered by top employers.',
     gradient: 'from-blue-600 to-cyan-500',
@@ -57,6 +58,19 @@ const roles = [
 
 export default function RoleSelectPage({ onSelectRole }) {
   const [hoveredRole, setHoveredRole] = useState(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    // Check if the current user is super admin
+    if (auth.currentUser?.email === 'admin@admin.com' || auth.currentUser?.email === 'superadmin@admin.com') {
+      setIsAdmin(true)
+    }
+  }, [])
+
+  // Filter roles based on admin status
+  const visibleRoles = isAdmin 
+    ? roles 
+    : roles.filter(r => r.id === 'candidate' || r.id === 'employer')
 
   return (
     <section className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden bg-gray-50 dark:bg-gray-950 transition-colors duration-500">
@@ -82,8 +96,8 @@ export default function RoleSelectPage({ onSelectRole }) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 lg:gap-6">
-          {roles.map((role, index) => (
+        <div className={`grid grid-cols-1 md:grid-cols-2 ${isAdmin ? 'lg:grid-cols-4' : 'max-w-4xl mx-auto'} gap-5 lg:gap-6`}>
+          {visibleRoles.map((role, index) => (
             <button
               key={role.id}
               onClick={() => onSelectRole(role.id)}
@@ -109,9 +123,11 @@ export default function RoleSelectPage({ onSelectRole }) {
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                   {role.title}
                 </h2>
-                <span className={`px-2.5 py-0.5 text-xs font-bold rounded-lg bg-gradient-to-r ${role.gradient} text-white`}>
-                  {role.subtitle}
-                </span>
+                {isAdmin && (
+                  <span className={`px-2.5 py-0.5 text-xs font-bold rounded-lg bg-gradient-to-r ${role.gradient} text-white`}>
+                    {role.subtitle}
+                  </span>
+                )}
               </div>
 
               <p className="text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
