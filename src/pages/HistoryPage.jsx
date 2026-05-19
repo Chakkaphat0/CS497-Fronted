@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import { auth, db } from '../firebase'
 import { collection, query, where, orderBy, getDocs, doc, deleteDoc } from 'firebase/firestore'
 
-export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
+export default function HistoryPage({ onGoDashboard, onGoChat, onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
   const { modal, notification } = App.useApp()
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
@@ -77,6 +77,7 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
       <Sidebar 
         activeTab="history" 
+        onGoDashboard={onGoDashboard}
         onGoChat={onGoChat}
         onGoVoice={onGoVoice}
         onGoHistory={onGoHistory}
@@ -149,9 +150,21 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
                   >
                     <div>
                       <div className="flex items-center gap-3 mb-3">
-                        <span className={`px-3 py-1 text-xs font-bold rounded-lg ${chat.mode === 'virtual' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' : 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'}`}>
-                          {chat.mode === 'virtual' ? 'Virtual Mode' : 'Normal Mode'}
+                        <span className={`px-3 py-1 text-xs font-bold rounded-lg ${
+                          chat.mode?.includes('virtual') 
+                            ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' 
+                            : 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                        }`}>
+                          {chat.mode === 'virtual' ? 'Virtual Mode' : 
+                           chat.mode === 'normal' ? 'Normal Mode' : 
+                           chat.mode === 'virtual-voice' ? 'Virtual Voice Mode' : 
+                           chat.mode === 'normal-voice' ? 'Normal Voice Mode' : 'Normal Mode'}
                         </span>
+                        {chat.overallScore !== undefined && chat.overallScore !== null && (
+                          <span className="px-3 py-1 text-xs font-bold rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                            Score: {chat.overallScore.toFixed(1)}
+                          </span>
+                        )}
                         <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
                           {chat.timestamp ? new Date(chat.timestamp.toDate()).toLocaleString() : 'Just now'}
                         </span>
@@ -192,8 +205,15 @@ export default function HistoryPage({ onGoChat, onGoVoice, onGoHistory, onLogout
           <div className="bg-white dark:bg-gray-900 w-full max-w-3xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col border border-gray-200 dark:border-gray-800">
             <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center shrink-0">
               <div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white">Interview Record</h3>
-                <p className="text-sm text-gray-500">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xl font-bold text-gray-900 dark:text-white">Interview Record</h3>
+                  {selectedChat.overallScore !== undefined && selectedChat.overallScore !== null && (
+                    <span className="px-3 py-1 text-sm font-bold rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                      Score: {selectedChat.overallScore.toFixed(1)}/10.0
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-500 mt-1">
                   {selectedChat.timestamp ? new Date(selectedChat.timestamp.toDate()).toLocaleString() : 'Unknown Time'}
                 </p>
               </div>

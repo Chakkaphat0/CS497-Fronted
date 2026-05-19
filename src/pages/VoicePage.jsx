@@ -1,17 +1,57 @@
 import { useState, useRef, useEffect } from 'react'
 import { App } from 'antd'
 import Sidebar from '../components/Sidebar'
+import { sendMessageToWebhook, getConfig } from '../services/webhookService'
+import { connectSSE, disconnectSSE } from '../services/sseService'
+import { auth, db } from '../firebase'
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
 
-export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, toggleTheme }) {
+// Parse score data from AI response
+function parseScoreData(text) {
+  const startMarker = '---SCORE_DATA_START---'
+  const endMarker = '---SCORE_DATA_END---'
+  const startIdx = text.indexOf(startMarker)
+  const endIdx = text.indexOf(endMarker)
+  if (startIdx === -1 || endIdx === -1) return null
+  try {
+    const jsonStr = text.substring(startIdx + startMarker.length, endIdx).trim()
+    const data = JSON.parse(jsonStr)
+    const displayText = text.substring(0, startIdx).trim()
+    return { scores: data, displayText }
+  } catch (e) {
+    console.error('Score parse error:', e)
+    return null
+  }
+}
+
+export default function VoicePage({ onGoHome, onGoChat, onGoHistory, onLogout, isDark, toggleTheme }) {
   const { notification, modal } = App.useApp()
   const [mode, setMode] = useState('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [micStatus, setMicStatus] = useState('idle') // 'idle', 'error', 'listening'
   
+  // New Chat States
+  const [messages, setMessages] = useState([])
+  const [isStarted, setIsStarted] = useState(false)
+  const [isEnded, setIsEnded] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [parsedScores, setParsedScores] = useState(null)
+  const [showScoreModal, setShowScoreModal] = useState(false)
+  const chatEndRef = useRef(null)
+  const accumulatedTextRef = useRef('')
+
+
+  
   // Device Selection States
   const [devices, setDevices] = useState([])
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
   const [isTestingMic, setIsTestingMic] = useState(false)
+  
+  // Subtitle and Speech States
+  const [subtitle, setSubtitle] = useState('')
+  const [aiSubtitle, setAiSubtitle] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState('disconnected')
+  const recognitionRef = useRef(null)
   
   const streamRef = useRef(null)
   const audioContextRef = useRef(null)
@@ -19,6 +59,14 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
   const animationFrameRef = useRef(null)
   const visualizerRef = useRef(null)
   const testVisualizerRef = useRef(null)
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, aiSubtitle, subtitle, isRecording])
 
   // Fetch available microphone devices
   const fetchDevices = async () => {
@@ -50,6 +98,140 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
     }
   }, [])
 
+  // Connect to SSE on mount
+  useEffect(() => {
+    setConnectionStatus('connecting')
+    
+    connectSSE(
+      (data) => {
+        if (data.type === 'connected') {
+          setConnectionStatus('connected')
+        } else if (data.type === 'ai' && data.text) {
+          const cleanText = data.text.trim()
+          if (cleanText !== '' && cleanText !== 'No response text') {
+            // Check for score data
+            const scoreResult = parseScoreData(cleanText)
+            if (scoreResult) {
+              setAiSubtitle(scoreResult.displayText)
+              setMessages(prev => [...prev, { type: 'ai', text: scoreResult.displayText }])
+              generateVoice(scoreResult.displayText)
+              setParsedScores(scoreResult.scores)
+              setShowScoreModal(true)
+              setIsEnded(true)
+            } else {
+              setAiSubtitle(cleanText)
+              setMessages(prev => [...prev, { type: 'ai', text: cleanText }])
+              generateVoice(cleanText)
+            }
+          }
+        }
+      },
+      (error) => {
+        setConnectionStatus('error')
+      }
+    )
+
+    return () => {
+      disconnectSSE()
+    }
+  }, [])
+
+  // Save history
+  useEffect(() => {
+    if (isEnded && !isSaving && messages.length > 0) {
+      setIsSaving(true);
+      if (auth.currentUser) {
+        let overall = null;
+        if (parsedScores) {
+          const nums = Object.values(parsedScores).filter(v => typeof v === 'number');
+          if (nums.length > 0) overall = nums.reduce((a, b) => a + b, 0) / nums.length;
+        }
+
+        addDoc(collection(db, 'chatHistory'), {
+          userId: auth.currentUser.uid,
+          messages: messages,
+          timestamp: serverTimestamp(),
+          mode: mode + '-voice',
+          overallScore: overall ? Math.round(overall * 10) / 10 : null
+        }).then(() => {
+          notification.success({
+            message: 'บันทึกสำเร็จ!',
+            description: 'บันทึกประวัติสนทนาด้วยเสียงเรียบร้อยแล้ว',
+            placement: 'topRight',
+          });
+        }).catch((err) => {
+          console.error('Error saving chat:', err);
+        });
+      }
+    }
+  }, [isEnded, isSaving, messages, mode, parsedScores])
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'th-TH';
+      recognition.interimResults = true;
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        let finalText = accumulatedTextRef.current;
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalText += event.results[i][0].transcript;
+            accumulatedTextRef.current = finalText;
+          } else {
+            interimText += event.results[i][0].transcript;
+          }
+        }
+        setSubtitle(finalText + interimText);
+      };
+
+      recognition.onend = () => {
+        console.log('Speech recognition ended');
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  const generateVoice = async (text) => {
+    try {
+      const response = await fetch('https://api-voice.botnoi.ai/openapi/v1/generate_audio', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'botnoi-token': 'ux5D3W3WAqnLzSvUDr2K17XfkL5R4aNT'
+        },
+        body: JSON.stringify({
+          text: text,
+          speaker: '1',
+          volume: 1,
+          speed: 1,
+          type_media: 'm4a',
+          save_file: 'true',
+          language: 'th'
+        })
+      });
+
+      const data = await response.json();
+      if (data.audio_url) {
+        const audio = new Audio(data.audio_url);
+        audio.play();
+      }
+    } catch (error) {
+      console.error('Error generating voice:', error);
+    }
+  };
+
+  const handleSendToAI = async (text) => {
+    const config = getConfig();
+    setAiSubtitle('กำลังรอคำตอบจาก AI...');
+    await sendMessageToWebhook(text, mode, config.signingSecret);
+  };
+
   // Core audio stopping logic
   const stopAudioTracks = () => {
     if (animationFrameRef.current) {
@@ -67,12 +249,42 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
 
   const stopInterviewMic = () => {
     stopAudioTracks()
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
     if (visualizerRef.current) {
       visualizerRef.current.style.transform = 'scale(1)'
       visualizerRef.current.style.boxShadow = 'none'
     }
     setIsRecording(false)
     setMicStatus('idle')
+    
+    // Use accumulated text, not just subtitle
+    const userText = (accumulatedTextRef.current || subtitle).trim();
+    if (userText) {
+      setMessages(prev => [...prev, { type: 'user', text: userText }]);
+      handleSendToAI(userText);
+    }
+    // Reset accumulated text after sending
+    accumulatedTextRef.current = '';
+    setSubtitle('');
+  }
+
+  const handleCancelSpeech = () => {
+    stopAudioTracks()
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    if (visualizerRef.current) {
+      visualizerRef.current.style.transform = 'scale(1)'
+      visualizerRef.current.style.boxShadow = 'none'
+    }
+    setIsRecording(false)
+    setMicStatus('idle')
+    // Discard text
+    accumulatedTextRef.current = '';
+    setSubtitle('');
+    notification.info({ message: 'ยกเลิกแล้ว', description: 'เริ่มพูดใหม่ได้เลย', placement: 'topRight', duration: 2 });
   }
 
   const stopTestMic = () => {
@@ -144,12 +356,32 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
   }
 
   const startInterviewMic = async () => {
+    if (!isStarted) {
+      setIsStarted(true);
+      // Send mode prefix as first message
+      const modeMsg = mode === 'virtual' ? 'Virtual mode' : 'Normal mode';
+      setMessages(prev => [...prev, { type: 'user', text: modeMsg }]);
+      handleSendToAI(modeMsg);
+    }
     setIsRecording(true)
     setMicStatus('listening')
+    accumulatedTextRef.current = '';
+    setSubtitle('')
+    setAiSubtitle('')
+    
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error('Recognition start error:', e);
+      }
+    }
+
     const success = await setupAudioVisualization(visualizerRef, 'interview')
     if (!success) {
       setIsRecording(false)
       setMicStatus('error')
+      if (recognitionRef.current) recognitionRef.current.stop();
       modal.error({
         title: 'ไม่สามารถเข้าถึงไมโครโฟนได้',
         content: 'กรุณาตรวจสอบการอนุญาตใช้งานไมโครโฟนในการตั้งค่าเบราว์เซอร์ของคุณ เพื่อใช้งานระบบสัมภาษณ์ด้วยเสียง',
@@ -193,6 +425,7 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
       <Sidebar 
         activeTab="voice" 
+        onGoDashboard={onGoHome}
         onGoChat={onGoChat} 
         onGoHistory={onGoHistory}
         onLogout={onLogout}
@@ -229,63 +462,152 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
 
         <div className="flex-1 flex overflow-hidden">
           {/* Main Voice Area */}
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white dark:bg-gray-950 relative">
+          <div className="flex-1 flex flex-col bg-white dark:bg-gray-950 relative">
             
-            <div className="text-center max-w-2xl w-full z-10 animate-fade-in-up">
-              <div className="mb-12 relative inline-block">
-                {isRecording && (
-                  <>
-                    <div className="absolute inset-0 bg-purple-500 rounded-full animate-ping opacity-20"></div>
-                    <div className="absolute -inset-4 bg-purple-400 rounded-full animate-pulse opacity-10"></div>
-                  </>
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {!isStarted && messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center animate-fade-in-up">
+                  <div className="mb-12 relative inline-block">
+                    <div className="w-40 h-40 rounded-full flex items-center justify-center text-6xl shadow-2xl relative z-10 bg-gray-100 dark:bg-gray-800 text-gray-400">
+                      🎙️
+                    </div>
+                  </div>
+                  <h2 className="text-4xl font-extrabold text-gray-900 dark:text-white mb-4">
+                    Ready to speak
+                  </h2>
+                  <p className="text-xl text-gray-500 dark:text-gray-400 mb-8">
+                    Select your microphone on the right, test it, then click "Start Speaking".
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-6 pb-20">
+                  {messages.map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.type === 'ai' ? 'justify-start' : 'justify-end'}`}>
+                      <div className={`max-w-[80%] lg:max-w-[70%] rounded-2xl px-6 py-4 shadow-sm ${
+                        msg.type === 'ai'
+                          ? 'bg-gray-100 dark:bg-gray-800/80 text-gray-800 dark:text-gray-100 rounded-tl-none'
+                          : 'bg-purple-600 text-white rounded-tr-none'
+                      }`}>
+                        {msg.type === 'ai' && (
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center text-xs">
+                              🤖
+                            </div>
+                            <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">AI Voice</span>
+                          </div>
+                        )}
+                        <p className="text-base leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {isRecording && subtitle && (
+                    <div className="flex justify-end animate-fade-in-up">
+                      <div className="max-w-[80%] lg:max-w-[70%] rounded-2xl px-6 py-4 shadow-sm bg-purple-400 dark:bg-purple-500/80 text-white rounded-tr-none">
+                        <p className="text-base leading-relaxed whitespace-pre-wrap italic opacity-80">
+                          {subtitle}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {aiSubtitle === 'กำลังรอคำตอบจาก AI...' && (
+                    <div className="flex justify-start animate-fade-in-up">
+                      <div className="bg-gray-100 dark:bg-gray-800/80 rounded-2xl rounded-tl-none px-6 py-5 shadow-sm flex gap-1.5 items-center">
+                        <div className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Control Bar */}
+            <div className="p-6 bg-white dark:bg-gray-950 border-t border-gray-100 dark:border-gray-800 shrink-0 relative flex justify-center">
+              {/* Floating Visualizer when started */}
+              {isStarted && (
+                <div className="absolute left-1/2 -translate-x-1/2 -top-10">
+                  <div className="relative">
+                    {isRecording && (
+                      <>
+                        <div className="absolute inset-0 bg-purple-500 rounded-full animate-ping opacity-20"></div>
+                        <div className="absolute -inset-4 bg-purple-400 rounded-full animate-pulse opacity-10"></div>
+                      </>
+                    )}
+                    <div 
+                      ref={visualizerRef}
+                      className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl shadow-lg relative z-10 transition-colors duration-300 ${
+                        isRecording 
+                          ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white' 
+                          : 'bg-gray-100 dark:bg-gray-800 text-gray-400'
+                      }`}
+                      style={{ transition: 'transform 0.1s ease-out, background 0.3s' }}
+                    >
+                      🎙️
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mt-2 w-full max-w-2xl">
+                {!isStarted && (
+                  <button
+                    onClick={onGoHome}
+                    className="px-8 py-4 rounded-full text-lg font-bold text-gray-700 bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-all shadow-md hover-lift"
+                  >
+                    Back to Modes
+                  </button>
                 )}
                 
-                {/* Visualizer Target */}
-                <div 
-                  ref={visualizerRef}
-                  className={`w-40 h-40 rounded-full flex items-center justify-center text-6xl shadow-2xl relative z-10 transition-colors duration-300 ${
-                    isRecording 
-                      ? 'bg-gradient-to-br from-purple-500 to-pink-500 text-white' 
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-400'
-                  }`}
-                  style={{ transition: 'transform 0.1s ease-out, background 0.3s' }}
+                <button 
+                  onClick={toggleRecording}
+                  disabled={isEnded}
+                  className={`px-10 py-4 rounded-full text-lg font-bold shadow-xl transition-all hover-lift flex items-center gap-3 ${
+                    isRecording
+                      ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/30'
+                      : 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/30'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  🎙️
-                </div>
-              </div>
+                  {isRecording ? (
+                    <>
+                      <span className="w-4 h-4 bg-white rounded-sm animate-pulse"></span>
+                      Stop Listening
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                      Start Speaking
+                    </>
+                  )}
+                </button>
 
-              <h2 className="text-4xl font-extrabold text-gray-900 dark:text-white mb-4">
-                {isRecording ? 'Listening...' : 'Ready to speak'}
-              </h2>
-              
-              <p className="text-xl text-gray-500 dark:text-gray-400 mb-12 h-14">
-                {isRecording 
-                  ? 'Speak your answer clearly. The UI will react to your voice.' 
-                  : 'Select your microphone on the right, test it, then start.'}
-              </p>
-
-              <button 
-                onClick={toggleRecording}
-                className={`px-10 py-5 rounded-full text-xl font-bold shadow-xl transition-all hover-lift flex items-center gap-3 mx-auto ${
-                  isRecording
-                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/30'
-                    : 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/30'
-                }`}
-              >
-                {isRecording ? (
-                  <>
-                    <span className="w-4 h-4 bg-white rounded-sm animate-pulse"></span>
-                    Stop Listening
-                  </>
-                ) : (
-                  <>
+                {/* Cancel speech button - appears when recording */}
+                {isRecording && (
+                  <button
+                    onClick={handleCancelSpeech}
+                    className="w-14 h-14 rounded-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700 flex items-center justify-center text-gray-600 dark:text-gray-300 transition-all shadow-md"
+                    title="ยกเลิกและพูดใหม่"
+                  >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
-                    Start Speaking
-                  </>
+                  </button>
                 )}
-              </button>
+
+                {isStarted && !isEnded && !isRecording && (
+                  <button
+                    onClick={() => setIsEnded(true)}
+                    className="px-8 py-4 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 rounded-full text-lg font-bold transition-colors"
+                  >
+                    End Interview
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -389,6 +711,85 @@ export default function VoicePage({ onGoChat, onGoHistory, onLogout, isDark, tog
           </div>
         </div>
       </main>
+
+      {/* Score Acceptance Modal */}
+      {showScoreModal && parsedScores && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-gray-900 w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-800 p-8">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-400 to-pink-500 flex items-center justify-center text-3xl shadow-lg">🏆</div>
+              <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white">ผลการสัมภาษณ์ (Voice)</h2>
+              <p className="text-gray-500 mt-1">คุณต้องการรับคะแนนนี้ไหม?</p>
+            </div>
+            
+            <div className="space-y-3 mb-6">
+              {Object.entries(parsedScores).map(([key, val]) => (
+                <div key={key} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+                  <span className="font-semibold text-gray-700 dark:text-gray-300">{key}</span>
+                  {typeof val === 'number' ? (
+                    <span className={`text-lg font-extrabold ${val >= 8 ? 'text-emerald-500' : val >= 6 ? 'text-blue-500' : 'text-amber-500'}`}>{val.toFixed(1)}</span>
+                  ) : (
+                    <span className="text-sm text-gray-500 dark:text-gray-400 max-w-[60%] text-right">{val}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {(() => {
+              const nums = Object.values(parsedScores).filter(v => typeof v === 'number')
+              const avg = nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : 0
+              return (
+                <div className="text-center mb-6 p-4 rounded-2xl bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800/50">
+                  <span className="text-sm font-bold text-gray-500 uppercase">Overall Score</span>
+                  <p className="text-4xl font-extrabold text-purple-600 dark:text-purple-400">{avg.toFixed(1)}<span className="text-lg text-gray-400">/10.0</span></p>
+                </div>
+              )
+            })()}
+
+            {mode === 'normal' ? (
+              <div className="text-center">
+                <p className="text-sm text-amber-600 dark:text-amber-400 mb-4 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800/50">
+                  ⚠️ โหมด Normal จะไม่ถูกบันทึกคะแนนลงในโปรไฟล์ของคุณ (ดูได้เฉพาะในประวัติ)
+                </p>
+                <button onClick={() => setShowScoreModal(false)} className="w-full py-3 rounded-xl font-bold text-white bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600 transition-all">
+                  ปิด
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <button onClick={() => {
+                  setShowScoreModal(false)
+                  notification.info({ message: 'ปฏิเสธคะแนน', description: 'คะแนนจะไม่ถูกบันทึก คุณสามารถสัมภาษณ์ใหม่ได้', placement: 'topRight' })
+                }} className="flex-1 py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 transition-all">
+                  ❌ ปฏิเสธ
+                </button>
+                <button onClick={async () => {
+                  if (!parsedScores || !auth.currentUser) return
+                  try {
+                    const numericScores = {}; let summary = ''
+                    for (const [key, val] of Object.entries(parsedScores)) {
+                      if (typeof val === 'number') numericScores[key] = val; else summary = val
+                    }
+                    const overall = Object.values(numericScores).length > 0 ? Object.values(numericScores).reduce((a, b) => a + b, 0) / Object.values(numericScores).length : 0
+                    await addDoc(collection(db, 'interviewScores'), {
+                      userId: auth.currentUser.uid,
+                      displayName: auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'Unknown',
+                      scores: numericScores, summary, overall: Math.round(overall * 10) / 10, mode: mode + '-voice', timestamp: serverTimestamp()
+                    })
+                    notification.success({ message: '✅ บันทึกคะแนนเรียบร้อย!', description: `Overall Score: ${overall.toFixed(1)}/10.0`, placement: 'topRight', duration: 6 })
+                    setShowScoreModal(false)
+                  } catch (err) {
+                    console.error(err)
+                    notification.error({ message: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกคะแนนได้', placement: 'topRight' })
+                  }
+                }} className="flex-1 py-3 rounded-xl font-bold text-white bg-purple-600 hover:bg-purple-700 shadow-lg shadow-purple-500/30 transition-all">
+                  ✅ รับคะแนน
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

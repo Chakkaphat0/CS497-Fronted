@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { App } from 'antd'
-import { auth, storage } from '../firebase'
+import { auth } from '../firebase'
 import { updateProfile } from 'firebase/auth'
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 export default function ProfilePage({ onBack, onLogout }) {
   const { notification, message: messageApi } = App.useApp()
@@ -29,10 +28,31 @@ export default function ProfilePage({ onBack, onLogout }) {
     try {
       let newPhotoURL = photoURL
       
+      // If a new file was selected, upload to Storage
       if (file) {
-        const fileRef = ref(storage, `profiles/${user.uid}/${file.name}`)
-        await uploadBytes(fileRef, file)
-        newPhotoURL = await getDownloadURL(fileRef)
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = reject
+          const canvas = document.createElement('canvas')
+          const img = new Image()
+          img.onload = () => {
+            const MAX = 256
+            let w = img.width, h = img.height
+            if (w > h) { h = (h / w) * MAX; w = MAX } else { w = (w / h) * MAX; h = MAX }
+            canvas.width = w; canvas.height = h
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+            resolve(canvas.toDataURL('image/jpeg', 0.8))
+          }
+          img.onerror = reject
+          img.src = URL.createObjectURL(file)
+        })
+
+        const { ref, uploadString, getDownloadURL } = await import('firebase/storage')
+        const { storage } = await import('../firebase')
+        const storageRef = ref(storage, `profiles/${user.uid}.jpg`)
+        await uploadString(storageRef, base64Data, 'data_url')
+        newPhotoURL = await getDownloadURL(storageRef)
       }
 
       await updateProfile(user, {

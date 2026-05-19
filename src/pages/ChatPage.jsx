@@ -6,9 +6,27 @@ import { connectSSE, disconnectSSE } from '../services/sseService'
 import { auth, db } from '../firebase'
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
 
+// Parse score data from AI response
+function parseScoreData(text) {
+  const startMarker = '---SCORE_DATA_START---'
+  const endMarker = '---SCORE_DATA_END---'
+  const startIdx = text.indexOf(startMarker)
+  const endIdx = text.indexOf(endMarker)
+  if (startIdx === -1 || endIdx === -1) return null
+  try {
+    const jsonStr = text.substring(startIdx + startMarker.length, endIdx).trim()
+    const data = JSON.parse(jsonStr)
+    const displayText = text.substring(0, startIdx).trim()
+    return { scores: data, displayText }
+  } catch (e) {
+    console.error('Score parse error:', e)
+    return null
+  }
+}
+
 const CONFIG = getConfig()
 
-export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
+export default function ChatPage({ onGoHome, onGoVoice, onGoHistory, onLogout, isDark, toggleTheme }) {
   const { notification } = App.useApp()
   const [messages, setMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -18,6 +36,8 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
   const [isStarted, setIsStarted] = useState(false)
   const [isEnded, setIsEnded] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [parsedScores, setParsedScores] = useState(null)
+  const [showScoreModal, setShowScoreModal] = useState(false)
   const chatEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -39,10 +59,17 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
         } else if (data.type === 'ai' && data.text) {
           const cleanText = data.text.trim()
           if (cleanText !== '' && cleanText !== 'No response text') {
-            setMessages(prev => [...prev, {
-              type: 'ai',
-              text: cleanText
-            }])
+            // Check for score data in the response
+            const scoreResult = parseScoreData(cleanText)
+            if (scoreResult) {
+              // Show the display text (without score JSON)
+              setMessages(prev => [...prev, { type: 'ai', text: scoreResult.displayText }])
+              setParsedScores(scoreResult.scores)
+              setShowScoreModal(true)
+              setIsEnded(true) // Force end interview
+            } else {
+              setMessages(prev => [...prev, { type: 'ai', text: cleanText }])
+            }
           }
           setIsLoading(false)
         }
@@ -63,11 +90,18 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
     if (isEnded && !isLoading && !isSaving && messages.length > 0) {
       setIsSaving(true);
       if (auth.currentUser) {
+        let overall = null;
+        if (parsedScores) {
+          const nums = Object.values(parsedScores).filter(v => typeof v === 'number');
+          if (nums.length > 0) overall = nums.reduce((a, b) => a + b, 0) / nums.length;
+        }
+
         addDoc(collection(db, 'chatHistory'), {
           userId: auth.currentUser.uid,
           messages: messages,
           timestamp: serverTimestamp(),
-          mode: mode
+          mode: mode,
+          overallScore: overall ? Math.round(overall * 10) / 10 : null
         }).then(() => {
           notification.success({
             message: 'บันทึกสำเร็จ!',
@@ -86,12 +120,12 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
         });
       }
     }
-  }, [isEnded, isLoading, isSaving, messages, mode])
+  }, [isEnded, isLoading, isSaving, messages, mode, parsedScores])
 
   const handleStartConversation = async () => {
     setIsStarted(true)
     setIsLoading(true)
-    const startMsg = 'สวัสดี'
+    const startMsg = mode === 'virtual' ? 'Virtual mode' : 'Normal mode'
     setMessages([{ type: 'user', text: startMsg }])
     
     try {
@@ -146,10 +180,60 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
     }
   }
 
+  const handleAcceptScores = async () => {
+    if (!parsedScores || !auth.currentUser) return
+    try {
+      // Extract numeric scores and summary
+      const numericScores = {}
+      let summary = ''
+      for (const [key, val] of Object.entries(parsedScores)) {
+        if (typeof val === 'number') numericScores[key] = val
+        else summary = val // string value is likely a summary/comment
+      }
+      const overall = Object.values(numericScores).length > 0
+        ? Object.values(numericScores).reduce((a, b) => a + b, 0) / Object.values(numericScores).length
+        : 0
+
+      await addDoc(collection(db, 'interviewScores'), {
+        userId: auth.currentUser.uid,
+        displayName: auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'Unknown',
+        scores: numericScores,
+        summary,
+        overall: Math.round(overall * 10) / 10,
+        mode,
+        timestamp: serverTimestamp()
+      })
+      notification.success({
+        message: '✅ บันทึกคะแนนเรียบร้อย!',
+        description: `Overall Score: ${overall.toFixed(1)}/10.0 — คะแนนจะปรากฏในโปรไฟล์ของคุณ`,
+        placement: 'topRight',
+        duration: 6,
+      })
+      setShowScoreModal(false)
+    } catch (err) {
+      console.error('Error saving scores:', err)
+      notification.error({
+        message: 'เกิดข้อผิดพลาด',
+        description: 'ไม่สามารถบันทึกคะแนนได้',
+        placement: 'topRight',
+      })
+    }
+  }
+
+  const handleRejectScores = () => {
+    setShowScoreModal(false)
+    notification.info({
+      message: 'ปฏิเสธคะแนน',
+      description: 'คะแนนจะไม่ถูกบันทึก คุณสามารถสัมภาษณ์ใหม่ได้',
+      placement: 'topRight',
+    })
+  }
+
   return (
     <div className={`flex h-screen bg-gray-50 dark:bg-gray-950 transition-colors duration-300 font-sans ${isDark ? 'dark' : ''}`}>
       <Sidebar 
         activeTab="chat" 
+        onGoDashboard={onGoHome}
         onGoVoice={onGoVoice} 
         onGoHistory={onGoHistory}
         onLogout={onLogout}
@@ -228,13 +312,21 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
                   <p className="text-gray-500 dark:text-gray-400 max-w-md mb-8">
                     Click the button below to initiate the interview. The AI will send a greeting message to confirm the connection.
                   </p>
-                  <button
-                    onClick={handleStartConversation}
-                    disabled={connectionStatus !== 'connected'}
-                    className="bg-primary-600 hover:bg-primary-700 disabled:bg-gray-400 text-white px-8 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-primary-500/30 hover:-translate-y-1 transition-all"
-                  >
-                    Start Conversation
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+                    <button
+                      onClick={onGoHome}
+                      className="px-8 py-4 rounded-2xl font-bold text-lg text-gray-700 bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-all shadow-md hover:-translate-y-1"
+                    >
+                      Back to Modes
+                    </button>
+                    <button
+                      onClick={handleStartConversation}
+                      disabled={connectionStatus !== 'connected'}
+                      className="bg-primary-600 hover:bg-primary-700 disabled:bg-gray-400 text-white px-8 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-primary-500/30 hover:-translate-y-1 transition-all"
+                    >
+                      Start Conversation
+                    </button>
+                  </div>
                 </div>
               ) : (
                 messages.map((msg, idx) => (
@@ -366,6 +458,64 @@ export default function ChatPage({ onGoVoice, onGoHistory, onLogout, isDark, tog
           </div>
         </div>
       </main>
+
+      {/* Score Acceptance Modal */}
+      {showScoreModal && parsedScores && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-gray-900 w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 dark:border-gray-800 p-8">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-emerald-400 to-blue-500 flex items-center justify-center text-3xl shadow-lg">🏆</div>
+              <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white">ผลการสัมภาษณ์</h2>
+              <p className="text-gray-500 mt-1">คุณต้องการรับคะแนนนี้ไหม?</p>
+            </div>
+            
+            <div className="space-y-3 mb-6">
+              {Object.entries(parsedScores).map(([key, val]) => (
+                <div key={key} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+                  <span className="font-semibold text-gray-700 dark:text-gray-300">{key}</span>
+                  {typeof val === 'number' ? (
+                    <span className={`text-lg font-extrabold ${val >= 8 ? 'text-emerald-500' : val >= 6 ? 'text-blue-500' : 'text-amber-500'}`}>{val.toFixed(1)}</span>
+                  ) : (
+                    <span className="text-sm text-gray-500 dark:text-gray-400 max-w-[60%] text-right">{val}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Overall */}
+            {(() => {
+              const nums = Object.values(parsedScores).filter(v => typeof v === 'number')
+              const avg = nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : 0
+              return (
+                <div className="text-center mb-6 p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-blue-50 dark:from-emerald-900/20 dark:to-blue-900/20 border border-emerald-200 dark:border-emerald-800/50">
+                  <span className="text-sm font-bold text-gray-500 uppercase">Overall Score</span>
+                  <p className="text-4xl font-extrabold text-emerald-600 dark:text-emerald-400">{avg.toFixed(1)}<span className="text-lg text-gray-400">/10.0</span></p>
+                </div>
+              )
+            })()}
+
+            {mode === 'normal' ? (
+              <div className="text-center">
+                <p className="text-sm text-amber-600 dark:text-amber-400 mb-4 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800/50">
+                  ⚠️ โหมด Normal จะไม่ถูกบันทึกคะแนนลงในโปรไฟล์ของคุณ (ดูได้เฉพาะในประวัติ)
+                </p>
+                <button onClick={() => setShowScoreModal(false)} className="w-full py-3 rounded-xl font-bold text-white bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600 transition-all">
+                  ปิด
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <button onClick={handleRejectScores} className="flex-1 py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 transition-all">
+                  ❌ ปฏิเสธ
+                </button>
+                <button onClick={handleAcceptScores} className="flex-1 py-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-500/30 transition-all">
+                  ✅ รับคะแนน
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-export default function Sidebar({ activeTab, onGoChat, onGoVoice, onGoHistory, onLogout }) {
+export default function Sidebar({ activeTab, onGoDashboard, onGoChat, onGoVoice, onGoHistory, onLogout }) {
   return (
     <aside className="w-[280px] bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 p-6 flex flex-col transition-colors duration-300 z-20 shadow-sm">
       <div className="flex items-center gap-3 mb-10 px-2">
@@ -13,6 +13,15 @@ export default function Sidebar({ activeTab, onGoChat, onGoVoice, onGoHistory, o
       </div>
 
       <nav className="space-y-2">
+        {onGoDashboard && (
+          <button
+            onClick={onGoDashboard}
+            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-white transition-all"
+          >
+            <span className="text-xl">🏠</span>
+            Dashboard
+          </button>
+        )}
         <button
           onClick={onGoChat}
           className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-medium transition-all ${
