@@ -118,36 +118,23 @@ export default function EmployerHub({ onLogout, onChangeRole, isDark, toggleThem
   const [realCandidates, setRealCandidates] = useState([])
   const [dbPositions, setDbPositions] = useState([])
 
-  // Load real candidates from scores
+  // Load real candidates from candidates collection
   useEffect(() => {
-    const q = query(collection(db, 'interviewScores'), orderBy('timestamp', 'desc'))
+    const q = query(collection(db, 'candidates'))
     const unsub = onSnapshot(q, snap => {
-      const grouped = {}
-      snap.docs.forEach(docSnap => {
+      const list = snap.docs.map(docSnap => {
         const data = docSnap.data()
-        if (!data.userId) return
-        if (!grouped[data.userId]) {
-          grouped[data.userId] = {
-            id: data.userId,
-            name: data.displayName || 'Unknown Candidate',
-            title: 'Candidate',
-            university: 'Other',
-            skills: ['Communication'],
-            experience: '1 year',
-            tier: 'free',
-            scores: data.scores || {},
-            overallSum: 0,
-            count: 0,
-            latestScores: data.scores || {}
-          }
+        return {
+          id: data.uid || docSnap.id,
+          name: data.name || data.displayName || 'Unknown Candidate',
+          title: data.title || 'Candidate',
+          university: data.university || 'Other',
+          skills: data.skills || ['Communication'],
+          experience: data.experience || '1 year',
+          tier: data.tier || 'free',
+          scores: data.scores || { overall: 0, technical: 0, communication: 0, problemSolving: 0 }
         }
-        grouped[data.userId].overallSum += (data.overall || 0)
-        grouped[data.userId].count += 1
       })
-      const list = Object.values(grouped).map(c => ({
-        ...c,
-        scores: { ...c.latestScores, overall: c.overallSum / c.count }
-      }))
       setRealCandidates(list)
     }, () => {})
     return unsub
